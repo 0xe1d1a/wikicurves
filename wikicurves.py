@@ -1,4 +1,5 @@
 from pyspark import SparkContext
+from time import time
 import sys, argparse, logging
 
 global args
@@ -19,13 +20,12 @@ def create_context( ):
   if args.silent:
     quiet_logs(sc)
   data = sc.textFile(wikidump).cache()
+  # extract the second column of the whole file
+  request_count = data.map(lambda x: x.split(" ")[2])
 
   #basic RDD data manipulation here
   #ref: https://spark.apache.org/docs/0.9.0/api/pyspark/index.html
-  numAs = data.filter(lambda s: 'a' in s).count()
-  numBs = data.filter(lambda s: 'b' in s).count()
-
-  print("Lines with a: %i, lines with b: %i" % (numAs, numBs))
+  #http://spark.apache.org/docs/latest/programming-guide.html
 
 
 def main( args, loglevel ):
