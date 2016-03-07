@@ -1,6 +1,9 @@
 from pyspark import SparkContext
+from pyspark.mllib import util
 from time import time
+from datetime import datetime, timedelta
 import sys, argparse, logging
+from numpy import array
 
 global args
 
@@ -12,26 +15,38 @@ def quiet_logs( sc ):
 
 
 def create_context( ):
-  global args
-  path = args.directory
-  # should iterate through directories here (os or special hdfs walk?)
-  wikidump =  path + "projectcounts-20140131-230000"
   sc = SparkContext("local", "wikicurves")
   if args.silent:
     quiet_logs(sc)
-  data = sc.textFile(wikidump).cache()
-  # extract the second column of the whole file
-  request_count = data.map(lambda x: x.split(" ")[2])
+  global args
+  path = args.directory
+  cur = datetime(2014, 1, 1, 00, 00)
+  end = datetime(2014, 1, 5, 23, 00)
+  onehour = timedelta(hours=1)
+  while cur < end:
+    fname = path + "pagecounts-2014" + cur.strftime("%m") + cur.strftime("%d") \
+            + "-" + cur.strftime("%H") + "*.gz"
+    logging.info("Working on " + fname)
+    raw_data = sc.textFile(fname)
+    sep = raw_data.map(lambda line: line.split(" "))
+    sep = sep.map(lambda vals: (vals[1], vals[2]))
+    sep = sep.filter(lambda val: val[0][0] != '%')
+    car = sep.cartesian(sep).filter(lambda pair: pair[0] != pair[1])
+    print(car.take(10))
+    return #debug
 
-  #basic RDD data manipulation here
+    cur+= onehour
+
+  #basic RDD data manipulation here, Note unpacking gz takes long time!
   #ref: https://spark.apache.org/docs/0.9.0/api/pyspark/index.html
   #http://spark.apache.org/docs/latest/programming-guide.html
 
 
+
 def main( args, loglevel ):
-    logging.basicConfig(format="%(levelname)s %(message)s", level=loglevel)
-    logging.info("Starting the script")
-    create_context()
+  logging.basicConfig(format="%(levelname)s %(message)s", level=loglevel)
+  logging.info("Starting the script")
+  create_context()
 
 #std entry point
 if __name__ == '__main__':
@@ -69,3 +84,5 @@ if __name__ == '__main__':
     loglevel = logging.INFO
 
   main(args, loglevel)
+
+
