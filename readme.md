@@ -7,3 +7,4 @@ Clusterization of similar attention curves by using hadoop and spark
   #interpolation problem?
   #lower case projects-pages normalize?
   #partition by project?
+  #reducebykey first to aggregate same projects with different capitilization?
