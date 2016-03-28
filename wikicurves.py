@@ -1,15 +1,15 @@
 from pyspark import SparkContext
 from pyspark.conf import SparkConf
 from pyspark.storagelevel import StorageLevel
-#from pyspark.mllib import util
 from time import time
 from datetime import datetime, timedelta
 import sys, logging
 import itertools
 import bisect
 import functools
-#import argparse
+import argparse
 #from numpy import array
+#from pyspark.mllib import util
 
 global args
 
@@ -20,53 +20,32 @@ def quiet_logs( sc ):
   logger.LogManager.getLogger("akka").setLevel( logger.Level.ERROR )
 
 
-def init_combiner(x):
-  l = list()
-  l.append(x)
-  return l
 
-def merge_vals(v,c):
+def createRDD(sc, input_file):
   try:
-    v.append(c)
-    return v
+    rdd = sc.textFile(input_file)
+    return rdd
   except Exception, e:
-    print (v,c)
-    raise e
+    logging.error("Exception in creation of RDD")
+    return sc.emptyRDD()
 
-def merge_combiners(v,c):
-  try:
-    return v+c
-  except Exception, e:
-    print (v,c)
-    raise e
+def rotate_month(path, i):
+  rdd = createRDD(sc, path)
+  rdd = rdd.filter(lambda line: line != None) \
+    # split to columns
+    .map(lambda line: line.split(" ")) \
+    # filter possible corrupted lines missing columns
+    .filter(lambda lst: len(lst) == 4) \
+    # sanity check
+    .filter(lambda lst: not (None in lst)) \
+    # create key pair with key: (project, page) and value: count
+    .map(lambda lst: ((lst[0],lst[1]), int(lst[2])))
+  # group into (project, page) and values: [count1, count2, ...]
+  grp = rdd.groupByKey(100).mapValues(lambda val: list(val))
+  grp.saveAsPickleFile("/user/lsde10/"+str(i))
 
-def get_partitioner(sample_rdd_kv, numPartitions, keyfunc=lambda x: x):
-    # print('get_partitioner: sample_rdd_kv:', sample_rdd_kv.take(1))
-    rddSize = sample_rdd_kv.count()
-    print('sortByKey: rddSize: ', rddSize)
-
-    maxSampleSize = numPartitions * 200.0  # constant from Spark's RangePartitioner
-    print('sortByKey: maxSampleSize', maxSampleSize)
-
-    fraction = min(maxSampleSize / max(rddSize, 1), 1.0)
-    print('sortByKey: fraction', fraction)
-
-    samples = sample_rdd_kv.sample(False, fraction, 1).map(lambda kv: kv[0]).collect()
-    samples = sorted(samples, key=keyfunc)
-    print('sortByKey: samples[0:10]', samples[0:10])
-
-    bounds = [samples[int(len(samples) * (i + 1) / numPartitions)]
-              for i in range(0, numPartitions - 1)]
-    print('sortByKey: bounds', bounds)
-
-    def rangePartitioner(k):
-        p = bisect.bisect_left(bounds, keyfunc(k))
-        return p
-
-    return rangePartitioner
-
-#main loop to rotate dataset
-def process_data( ):
+#main loop to rotate dataset (takes about 20 hours if all goes well!)
+def rotate_data( ):
   conf = SparkConf()
   conf.set("io.compression.codecs", "io.sensesecure.hadoop.xz.XZCodec")
   conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
@@ -74,99 +53,40 @@ def process_data( ):
   global args
   if args.silent:
     quiet_logs(sc)
-  path = args.directory
+  #path = args.directory
 
-  #path = "/user/hannesm/lsde/wikistats/2014/2014-01/"
-  cur = datetime(2014, 1, 1, 00, 00)
-  end = datetime(2014, 1, 1, 23, 00)
-  onehour = timedelta(hours=1)
-
-  #create file names
-  file_list = []
-  while cur < end:
-    fname = path + "pagecounts-2014" + cur.strftime("%m") + cur.strftime("%d") \
-            + "-" + cur.strftime("%H") + "*.gz"
-    logging.info("Adding " + fname)
-    file_list.append(fname)
-    cur+= onehour
-
-  partition_num = len(file_list) * 20
-
+  #doing [1-9] since month in the path is 01,02,03 etc
+  for i in range (1,10):
+    path = "/user/hannesm/lsde/wikistats/2014/2014-0"+str(i)+"/pagecounts-2014*"
+    rotate_month(path, i)
+  #do the rest of the months as well
+  path = "/user/hannesm/lsde/wikistats/2014/2014-10/pagecounts-2014*"
+  rotate_month(path, 10)
+  path = "/user/hannesm/lsde/wikistats/2014/2014-11/pagecounts-2014*"
+  rotate_month(path, 11)
+  path = "/user/hannesm/lsde/wikistats/2014/2014-12/pagecounts-2014*"
+  rotate_month(path, 12)
 
   rdd_list = [
-    sc.textFile(input_file)
-    for input_file in file_list
+    createRDD(sc, "/user/lsde10/"+str(i) +"/*")
+    for i in range(1,13)
   ]
 
+  un = sc.union(rdd_list)
+  fin = un.reduceByKey(lambda x,y: x+y)
 
-  rdd_list = [
-    # filter possible empty lines
-    rdd.filter(lambda line: line != None)
-    # split to columns
-    .map(lambda line: line.split(" "))
-    # filter possible corrupted lines missing columns
-    .filter(lambda lst: len(lst) == 4)
-    # sanity check
-    .filter(lambda lst: not (None in lst))
-    # create key pairs of ("key", "val1 val2")
-    .map(lambda lst: ((lst[0].lower(),lst[1].lower()), int(lst[2])))
-    # aggregate the same pages
-    #.reduceByKey(lambda x,y: x+y)
-    #.persist()
-    for rdd in rdd_list
-  ]
-
-  sample_rdd = rdd_list[0]
-  sample_rdd.persist(StorageLevel.MEMORY_AND_DISK)
-
-  range_partitioner = get_partitioner(
-      sample_rdd.map(lambda lst: lst[0]),  # key by proj, page
-      partition_num,
-  )
-
-def init_combiner(x):
-  l = list()
-  l.append(x)
-  return l
-
-def merge_vals(v,c):
-  try:
-    v.append(c)
-    return v
-  except Exception, e:
-    print (v,c)
-    raise e
-
-def merge_combiners(v,c):
-  try:
-    return v+c
-  except Exception, e:
-    print (v,c)
-    raise e
+  fin = fin.coalesce(200)
 
 
-  un_rdd = sc.union(rdd_list).partitionBy(partition_num, range_partitioner)
-  grp = un_rdd.combineByKey(
-              init_combiner,
-              merge_vals,
-              merge_combiners,
-              partition_num,
-              range_partitioner
-                          ).mapValues(lambda val: list(val)).persist()
-
-  #args = tuple(rdd_list[1:])
-  #grp = rdd_list[0].groupWith(*args).mapValues(lambda val: [i for e in val for i in e])
-
-  out = grp.take(400)
-  for e in out:
-    print (e)
+  fin.saveAsPickleFile("/user/lsde10/fin")
 
 
 
 def main( args, loglevel ):
   logging.basicConfig(format="%(levelname)s %(message)s", level=loglevel)
   logging.info("Starting the script")
-  process_data()
+  rotate_data()
+
 
 #std entry point
 if __name__ == '__main__':
@@ -189,26 +109,6 @@ if __name__ == '__main__':
     help="increase output verbosity",
     action="store_true")
   parser.add_argument(
-    "-l",
-    "--list",
-    help="union & use list",
-    action="store_true")
-  parser.add_argument(
-    "-t",
-    "--string",
-    help="union & use string concat",
-    action="store_true")
-  parser.add_argument(
-    "-g",
-    "--group",
-    help="union & use group by",
-    action="store_true")
-  parser.add_argument(
-    "-j",
-    "--join",
-    help="use full outer join",
-    action="store_true")
-  parser.add_argument(
     "-s",
     "--silent",
     help="supress most logging messages",
@@ -224,3 +124,4 @@ if __name__ == '__main__':
     loglevel = logging.INFO
 
   main(args, loglevel)
+
