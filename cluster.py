@@ -1,12 +1,13 @@
-from random import randint
-
+import numpy as np
+from fastdtw import fastdtw
 from pyspark import SparkContext, SparkConf
+from scipy.spatial.distance import euclidean
 
 
 class KMeans(object):
     def __init__(self, sc, rdd, k, max_iterations=100):
         self.sc = sc
-        self.rdd = rdd
+        self.rdd = rdd.mapValues(lambda val: np.array(val))
         self.k = k
         self.max_iterations = max_iterations
 
@@ -18,7 +19,7 @@ class KMeans(object):
             old_centroids = centroids
             iteration += 1
             self._add_labels(centroids)
-            centroids = self._update_centroids(centroids)
+            centroids = self._get_centroids(centroids)
             centroids = self.sc.broadcast(centroids)
         return centroids
 
@@ -32,26 +33,29 @@ class KMeans(object):
 
     def _add_labels(self, centroids):
         def min_dist(x):
-            min_dist = 10000
+            min_dist = 100000000  # don't judge my large number
             centroid = 0
             for c in range(self.k):
                 dst = self.distance(x, centroids[c])
                 if dst < min_dist:
                     min_dist = dst
                     centroid = c
-            x.insert(0, centroid)  # assign centroid to instance
+            x = (centroid, x)  # assign centroid to instance
 
         self.rdd.foreach(min_dist)
 
-    def _update_centroids(self):
+    def _get_centroids(self):
         def remove_label(x):
-            x.pop(0)
+            x = x[1]
 
+        clusters = self.rdd.reducyByKey(lambda x, y: (x + y) / 2).collect()
         self.rdd.foreach(remove_label)
-        return self.rdd.take(self.k)
+        clusters.foreach(remove_label)
+        return clusters.take(self.k)
 
     def distance(self, v1, v2):
-        return randint(1, 10000)
+        distance, path = fastdtw(v1, v2, dist=euclidean)
+        return distance
 
 
 def quiet_logs(sc):
