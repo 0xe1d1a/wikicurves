@@ -48,10 +48,10 @@ class KMeans(object):
         def remove_label(x):
             x = x[1]
 
-        clusters = self.rdd.reducyByKey(lambda x, y: (x + y) / 2).collect()
+        centroids = self.rdd.reduceByKey(lambda x, y: (x + y) / 2).collect()
         self.rdd.foreach(remove_label)
-        clusters.foreach(remove_label)
-        return clusters.take(self.k)
+        centroids.foreach(remove_label)
+        return centroids.take(self.k)
 
     def distance(self, v1, v2):
         distance, path = fastdtw(v1, v2, dist=euclidean)
