@@ -1,0 +1,38 @@
+body {
+    font: 10px sans-serif;
+}
+
+.axis path,
+.axis line {
+    fill: none;
+    stroke: #000;
+    shape-rendering: crispEdges;
+}
+
+.line {
+    fill: none;
+    stroke: steelblue;
+    stroke-width: 1.5px;
+}
+
+circle {
+    stroke: #222222;
+    stroke-width: 2;
+}
+
+#bubbles {
+    position: absolute;
+    width: 500px;
+    height: 500px;
+    left: 0;
+    top: 0;
+}
+
+#interpolations {
+    position: absolute;
+    width: 500px;
+    height: 500px;
+    left: 600;
+    top: 0;
+    display: none;
+}
