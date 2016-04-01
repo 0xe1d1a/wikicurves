@@ -5,22 +5,20 @@ from scipy.spatial.distance import euclidean
 
 
 class KMeans(object):
-    def __init__(self, sc, rdd, k, max_iterations=100):
-        self.sc = sc
+    def __init__(self, rdd, k, max_iterations=100):
         self.rdd = rdd.mapValues(lambda val: np.array(val))
         self.k = k
         self.max_iterations = max_iterations
 
     def cluster(self):
         old_centroids = None
-        centroids = self._initialise_centroids(self.rdd)
+        centroids = self._initialise_centroids()
         iteration = 0
         while not self._should_stop(old_centroids, centroids, iteration):
             old_centroids = centroids
             iteration += 1
             self._add_labels(centroids)
             centroids = self._get_centroids(centroids)
-            centroids = self.sc.broadcast(centroids)
         return centroids
 
     def _initialise_centroids(self):
@@ -48,7 +46,8 @@ class KMeans(object):
         def remove_label(x):
             x = x[1]
 
-        centroids = self.rdd.reduceByKey(lambda x, y: (x + y) / 2).collect()
+        centroids = self.rdd.reduceByKey(
+            lambda x, y: (x + y) / 2).cache().collect()
         self.rdd.foreach(remove_label)
         centroids.foreach(remove_label)
         return centroids.take(self.k)
@@ -76,6 +75,7 @@ FILENAME = '/user/lsde10/fin3/*'
 data = sc.textFile(FILENAME)
 parsed_data = data.map(lambda x: x.split(',')[2:])
 
-centroids = KMeans(sc, parsed_data, 3)
+model = KMeans(parsed_data, 3)
+centroids = model.cluster()
 
 log.info(centroids)
