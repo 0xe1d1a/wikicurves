@@ -28,6 +28,30 @@ def createRDD(sc, input_file):
   except Exception, e:
     logging.error("Exception in creation of RDD")
     return sc.emptyRDD()
+#The clusterisation using spark MLlib
+def cluster():
+  from pyspark.mllib.clustering import KMeans, KMeansModel
+  from pyspark.mllib.linalg import Vectors
+  import numpy as np
+
+  app_name = 'wikicurves_cluster'
+  conf = SparkConf()
+  conf.setAppName(app_name)
+  conf.set("io.compression.codecs", "io.sensesecure.hadoop.xz.XZCodec")
+  conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+  sc = SparkContext(conf=conf)
+
+  parsed_data = sc.pickleFile("/user/lsde10/resamplingset/*")
+  parsed_data = parsed_data.map(lambda x: np.array(x[1][1]))
+  print 'Starting k-means'
+  #use k=4 and 200 iterations
+  clusters = KMeans.train(parsed_data, 4, 200)
+  print clusters.centers
+  #take 10% of our data to visualise
+  sample = parsed_data.mapValues(lambda x: x[1]).sample(False, 0.1, 917)
+  sample.map(lambda val: '{},{},{},{}'.format(clusters.predict(np.array(val[1])),val[0][0], val[0][1], ','.join(map(str, val[1]))))
+  sample.saveAsTextFile("/user/lsde10/sample_out")
+
 
 def rotate_month(path, i):
   rdd = createRDD(sc, path)
@@ -71,16 +95,37 @@ def rotate_data( ):
     createRDD(sc, "/user/lsde10/"+str(i) +"/*")
     for i in range(1,13)
   ]
-
+  #aggregate final dataset
   un = sc.union(rdd_list)
   fin = un.reduceByKey(lambda x,y: x+y)
-
   fin = fin.coalesce(200)
-
-
   fin.saveAsPickleFile("/user/lsde10/fin")
 
+  #aggregate by month
+  rdd_list = [
+    createRDD(sc, "/user/lsde10/"+str(i) +"/*").mapValues(lambda lst: [sum(lst)])
+    for i in range(1,13)
+  ]
+  un = sc.union(rdd_list)
+  fin = un.reduceByKey(lambda x,y: x+y)
+  fin = fin.coalesce(200)
+  fin.saveAsPickleFile("/user/lsde10/aggrbymon")
 
+  #create working dataset. Filter out small be throwing out small length vectors
+  #Working with ~60% of the dataset.
+  rdata = sc.pickleFile("/user/lsde10/fin/*")
+  rdata = rdata.filter(lambda val: len(val[1]) > 4500)
+  rdata = rdata.filter(lambda val: not (".mw" in val[0][0]))
+  rdata.coalesce(100).saveAsPickleFile("/user/lsde10/workingset")
+
+  #create the resampling set by aggregating the monthly set with the working set
+  fin = sc.pickleFile("/user/lsde10/workingset/*")
+  bymon = sc.pickleFile("/user/lsde10/aggrbymon/*")
+  bymon = bymon.filter(lambda val: sum(val[1]) > 30 and len(val[1]) == 12)
+  grp = fin.join(bymon, 100).cache()
+  grp.saveAsPickleFile("/user/lsde10/resamplingset")
+
+  cluster()
 
 def main( args, loglevel ):
   logging.basicConfig(format="%(levelname)s %(message)s", level=loglevel)
